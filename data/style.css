@@ -1,0 +1,147 @@
+/* hanzi — app styles. Kept small and on top of libadwaita named colours. */
+
+.hero-glyph {
+  font-family: "Noto Sans CJK SC", "Source Han Sans SC", "Noto Sans SC", sans-serif;
+  font-size: 88px;
+  font-weight: 700;
+  color: @accent_bg_color;
+}
+
+.hanzi-glyph {
+  font-family: "Noto Sans CJK SC", "Source Han Sans SC", "Noto Sans SC", sans-serif;
+  font-size: 112px;
+  font-weight: 500;
+}
+
+.hanzi-card {
+  background-color: @card_bg_color;
+  color: @card_fg_color;
+  border-radius: 24px;
+  box-shadow: 0 10px 36px alpha(@window_fg_color, 0.10);
+  padding: 28px 36px 24px 36px;
+}
+
+.group-card {
+  background-color: @card_bg_color;
+  color: @card_fg_color;
+  border-radius: 16px;
+  padding: 14px 18px;
+  box-shadow: 0 4px 16px alpha(@window_fg_color, 0.06);
+  min-width: 400px;
+}
+
+.group-card:hover {
+  background-color: alpha(@accent_bg_color, 0.08);
+}
+
+.symbol-button {
+  font-family: "Noto Sans CJK SC", "Source Han Sans SC", "Noto Sans SC", sans-serif;
+  font-size: 22px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 6px 10px;
+  border-radius: 12px;
+}
+
+.symbol-button:hover {
+  background-color: alpha(@accent_bg_color, 0.12);
+}
+
+.audio-prompt-play {
+  min-width: 56px;
+  min-height: 56px;
+  border-radius: 28px;
+  padding: 0;
+}
+
+.pinyin {
+  font-size: 26px;
+  font-weight: 600;
+  color: @accent_bg_color;
+}
+
+.meaning {
+  font-size: 19px;
+}
+
+.hint {
+  color: alpha(@window_fg_color, 0.55);
+}
+
+/* Mastery: quiz and writing progress, lower of the two counts.
+   Five distinct hues instead of shades of one accent. */
+.mastery-1 {
+  color: @blue_2;
+}
+
+.mastery-2 {
+  color: @purple_2;
+}
+
+.mastery-3 {
+  color: @orange_3;
+}
+
+.mastery-4 {
+  color: @yellow_5;
+  text-shadow: 0 0 12px alpha(@orange_4, 0.45);
+}
+
+.mastery-5 {
+  color: @green_4;
+  text-shadow: 0 0 16px alpha(@green_5, 0.55);
+}
+
+.mastery-badge {
+  color: @green_4;
+  font-weight: 700;
+}
+
+.review-progress {
+  min-height: 6px;
+}
+
+.answer-choice {
+  padding: 10px 12px;
+  border-radius: 14px;
+}
+
+.answer-choice:hover {
+  background-color: alpha(@accent_bg_color, 0.12);
+}
+
+.answer-correct {
+  background-color: @success_bg_color;
+  color: @success_fg_color;
+  box-shadow: none;
+}
+
+.answer-wrong {
+  background-color: @error_bg_color;
+  color: @error_fg_color;
+  box-shadow: none;
+}
+
+.answer-number {
+  font-size: 12px;
+  font-weight: 700;
+  color: alpha(@window_fg_color, 0.5);
+}
+
+.answer-feedback {
+  color: @error_bg_color;
+  font-size: 13px;
+}
+
+.written-word {
+  font-family: "Noto Sans CJK SC", "Source Han Sans SC", "Noto Sans SC", sans-serif;
+  font-size: 22px;
+  color: alpha(@window_fg_color, 0.45);
+}
+
+.stroke-card {
+  background-color: @card_bg_color;
+  border-radius: 20px;
+  padding: 10px;
+  box-shadow: 0 6px 22px alpha(@window_fg_color, 0.08);
+}

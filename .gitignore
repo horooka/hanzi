@@ -1,0 +1,10 @@
+/target
+/build-dir
+/.flatpak-builder
+/repo
+*.flatpak
+*.flatpakrepo
+__pycache__/
+.venv/
+.rag
+note.md

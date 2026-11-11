@@ -1,0 +1,25 @@
+[package]
+name = "hanzi"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.92"
+description = "Master Mandarin characters and words with HSK 3.0 groups"
+license = "MIT"
+repository = "https://github.com/horooka/hanzi"
+
+[dependencies]
+adw = { package = "libadwaita", version = "0.9", features = ["v1_6"] }
+anyhow = "1"
+gio = "0.22"
+glib = "0.22"
+gtk = { package = "gtk4", version = "0.11" }
+rusqlite = { version = "0.42", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[build-dependencies]
+glib-build-tools = "0.22"
+
+[profile.release]
+lto = "thin"
+strip = true

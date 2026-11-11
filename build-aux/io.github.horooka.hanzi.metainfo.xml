@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.horooka.hanzi</id>
+  <name>Hanzi</name>
+  <summary>Train Mandarin characters and words in shuffled groups</summary>
+
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+
+  <description>
+    <p>
+      Hanzi is a focused Mandarin vocabulary trainer for HSK 3.0 levels 1–3.
+      Open a group, train it in shuffled order, or pick a single character or
+      word. Practice by choosing the translation or writing the characters
+      from memory.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>899 characters and 1657 words from HSK 3.0 levels 1–3</li>
+      <li>Character and word groups per level, plus combined groups</li>
+      <li>Custom groups: append entries during review and train them like built-in groups</li>
+      <li>Mastery colors driven by correct quiz picks and clean writings</li>
+      <li>Two input modes: translation choices or writing from pinyin and meaning</li>
+      <li>Tone-marked pinyin and simplified/traditional forms</li>
+      <li>Mode switch in the header, including mid-session</li>
+      <li>Native stroke-order hints and stroke tracing</li>
+      <li>Keyboard-first training flow</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">io.github.horooka.hanzi.desktop</launchable>
+
+  <url type="homepage">https://github.com/horooka/hanzi</url>
+  <url type="bugtracker">https://github.com/horooka/hanzi/issues</url>
+
+  <developer id="io.github.horooka">
+    <name>horooka</name>
+  </developer>
+
+  <content_rating type="oars-1.1"/>
+
+  <branding>
+    <color type="primary" scheme_preference="light">#e5a50a</color>
+    <color type="primary" scheme_preference="dark">#c64600</color>
+  </branding>
+
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/horooka/hanzi/v0.1.0/screenshots/quiz.png</image>
+      <caption>Translation quiz with a mastered character</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/horooka/hanzi/v0.1.0/screenshots/group-symbols-and-mastering.png</image>
+      <caption>Character grid with mastery colors</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/horooka/hanzi/v0.1.0/screenshots/writing.png</image>
+      <caption>Writing practice with stroke hints</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/horooka/hanzi/v0.1.0/screenshots/groups.png</image>
+      <caption>HSK 3.0 groups and custom groups</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/horooka/hanzi/v0.1.0/screenshots/custom-group.png</image>
+      <caption>Add the current entry to a custom group</caption>
+    </screenshot>
+  </screenshots>
+
+  <releases>
+    <release version="0.1.0" date="2026-11-14">
+      <description>
+        <p>First release: HSK 3.0 character and word groups, shuffled
+           training, translation quiz, writing review, custom groups, mastery
+           colors, and stroke-order data.</p>
+      </description>
+    </release>
+  </releases>
+</component>

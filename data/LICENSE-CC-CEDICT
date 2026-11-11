@@ -1,0 +1,17 @@
+CC-CEDICT
+=========
+
+The English glosses in data/vocab.json are derived from CC-CEDICT, the
+community-maintained Chinese-English dictionary.
+
+  Source:  https://www.mdbg.net/chinese/dictionary?page=cc-cedict
+  License: Creative Commons Attribution-ShareAlike 4.0 International
+           https://creativecommons.org/licenses/by-sa/4.0/
+
+  CC-CEDICT is Copyright (C) 1997, 1998 Paul Andrew Denisowski and
+  contributors; published by MDBG.
+
+Snapshot used: 2026-11-14 (entry count 125413).
+
+The derived glosses in data/vocab.json are distributed under the same
+CC BY-SA 4.0 terms. The application code remains under its own license.

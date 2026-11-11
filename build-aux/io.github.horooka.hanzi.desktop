@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Hanzi
+GenericName=Mandarin Vocabulary
+Comment=Train Mandarin characters in shuffled groups
+Exec=hanzi
+Icon=io.github.horooka.hanzi
+Terminal=false
+Type=Application
+Categories=Education;Languages;
+Keywords=Chinese;Mandarin;Vocabulary;Flashcards;HSK;
+StartupNotify=true

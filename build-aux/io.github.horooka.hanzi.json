@@ -1,0 +1,56 @@
+{
+  "app-id": "io.github.horooka.hanzi",
+  "runtime": "org.gnome.Platform",
+  "runtime-version": "51",
+  "sdk": "org.gnome.Sdk",
+  "sdk-extensions": [
+    "org.freedesktop.Sdk.Extension.rust-stable"
+  ],
+  "command": "hanzi",
+  "finish-args": [
+    "--share=ipc",
+    "--socket=wayland",
+    "--socket=fallback-x11",
+    "--device=dri"
+  ],
+  "build-options": {
+    "append-path": "/usr/lib/sdk/rust-stable/bin",
+    "env": {
+      "CARGO_HOME": "/run/build/hanzi/cargo",
+      "CARGO_NET_OFFLINE": "true"
+    }
+  },
+  "modules": [
+    {
+      "name": "hanzi",
+      "buildsystem": "simple",
+      "build-commands": [
+        "cargo --offline fetch --manifest-path Cargo.toml --verbose",
+        "cargo --offline build --release --locked",
+        "install -Dm755 target/release/hanzi /app/bin/hanzi",
+        "mkdir -p /app/share/icons",
+        "cp -a data/icons/hicolor /app/share/icons/",
+        "rm -f /app/share/icons/hicolor/index.theme",
+        "install -Dm644 build-aux/io.github.horooka.hanzi.desktop /app/share/applications/io.github.horooka.hanzi.desktop",
+        "install -Dm644 build-aux/io.github.horooka.hanzi.metainfo.xml /app/share/metainfo/io.github.horooka.hanzi.metainfo.xml",
+        "install -Dm644 LICENSE /app/share/licenses/io.github.horooka.hanzi/LICENSE",
+        "install -Dm644 data/strokes/ARPHICPL.TXT /app/share/licenses/io.github.horooka.hanzi/ARPHICPL.TXT",
+        "install -Dm644 data/LICENSE-CC-CEDICT /app/share/licenses/io.github.horooka.hanzi/LICENSE-CC-CEDICT"
+      ],
+      "sources": [
+        {
+          "type": "dir",
+          "path": "..",
+          "skip": [
+            ".git",
+            "target",
+            "build-dir",
+            ".flatpak-builder",
+            "*.flatpak"
+          ]
+        },
+        "cargo-sources.json"
+      ]
+    }
+  ]
+}
