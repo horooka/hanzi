@@ -68,7 +68,7 @@ pub fn sandhi(keys: &[String]) -> Vec<String> {
             match next_tone {
                 Some(4) => out[index] = with_tone(&out[index], 2),
                 Some(1..=3) => out[index] = with_tone(&out[index], 4),
-                _ => {}
+                _ => {},
             }
         }
     }
@@ -113,7 +113,7 @@ fn split_tone(syllable: &str) -> (&str, Option<u8>) {
         Some(digit) if (1..=5).contains(&digit) => {
             let end = syllable.len() - 1;
             (&syllable[..end], Some(digit as u8))
-        }
+        },
         _ => (syllable, None),
     }
 }

@@ -216,7 +216,7 @@ fn take(tokens: &[Token], index: &mut usize, count: usize) -> Option<Vec<f64>> {
             Some(Token::Number(value)) => {
                 values.push(*value);
                 *index += 1;
-            }
+            },
             _ => return None,
         }
     }
@@ -240,7 +240,7 @@ fn parse_path(data: &str) -> Option<Vec<Seg>> {
             Some(Token::Command(character)) => {
                 index += 1;
                 Some(*character)
-            }
+            },
             _ => None,
         };
         let command_character = explicit.or(command)?;
@@ -270,7 +270,7 @@ fn parse_path(data: &str) -> Option<Vec<Seg>> {
                 last_was_cubic = false;
                 last_was_quadratic = false;
                 continue;
-            }
+            },
             'L' => {
                 let values = take(&tokens, &mut index, 2)?;
                 let end = point(values[0], values[1]);
@@ -278,7 +278,7 @@ fn parse_path(data: &str) -> Option<Vec<Seg>> {
                 current = end;
                 last_was_cubic = false;
                 last_was_quadratic = false;
-            }
+            },
             'H' => {
                 let values = take(&tokens, &mut index, 1)?;
                 let x = if relative {
@@ -291,7 +291,7 @@ fn parse_path(data: &str) -> Option<Vec<Seg>> {
                 current = end;
                 last_was_cubic = false;
                 last_was_quadratic = false;
-            }
+            },
             'V' => {
                 let values = take(&tokens, &mut index, 1)?;
                 let y = if relative {
@@ -304,7 +304,7 @@ fn parse_path(data: &str) -> Option<Vec<Seg>> {
                 current = end;
                 last_was_cubic = false;
                 last_was_quadratic = false;
-            }
+            },
             'C' => {
                 let values = take(&tokens, &mut index, 6)?;
                 let c1 = point(values[0], values[1]);
@@ -315,7 +315,7 @@ fn parse_path(data: &str) -> Option<Vec<Seg>> {
                 last_control = Some(c2);
                 last_was_cubic = true;
                 last_was_quadratic = false;
-            }
+            },
             'S' => {
                 let values = take(&tokens, &mut index, 4)?;
                 let c1 = if last_was_cubic {
@@ -334,7 +334,7 @@ fn parse_path(data: &str) -> Option<Vec<Seg>> {
                 last_control = Some(c2);
                 last_was_cubic = true;
                 last_was_quadratic = false;
-            }
+            },
             'Q' => {
                 let values = take(&tokens, &mut index, 4)?;
                 let control = point(values[0], values[1]);
@@ -344,7 +344,7 @@ fn parse_path(data: &str) -> Option<Vec<Seg>> {
                 last_control = Some(control);
                 last_was_cubic = false;
                 last_was_quadratic = true;
-            }
+            },
             'T' => {
                 let values = take(&tokens, &mut index, 2)?;
                 let control = if last_was_quadratic {
@@ -362,18 +362,18 @@ fn parse_path(data: &str) -> Option<Vec<Seg>> {
                 last_control = Some(control);
                 last_was_cubic = false;
                 last_was_quadratic = true;
-            }
+            },
             'Z' => {
                 segments.push(Seg::Close);
                 current = subpath_start;
                 last_was_cubic = false;
                 last_was_quadratic = false;
-            }
+            },
             _ => {
                 // Unknown command: skip it and stop trying to reuse it.
                 command = None;
                 continue;
-            }
+            },
         }
 
         command = Some(command_character);

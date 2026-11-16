@@ -101,6 +101,9 @@ struct Ui {
     audio_prompt_panel: gtk::Box,
     custom_group_popover: gtk::Popover,
     custom_group_box: gtk::Box,
+    search_entry: gtk::SearchEntry,
+    search_results: gtk::Box,
+    search_return: RefCell<Option<String>>,
     writing_pad: Rc<WritingPad>,
     hint: gtk::Label,
     summary: adw::StatusPage,
@@ -112,7 +115,7 @@ pub fn build(app: &adw::Application) {
         Err(error) => {
             eprintln!("hanzi: could not open the database: {error:#}");
             return;
-        }
+        },
     };
     let audio = Audio::new();
 
@@ -125,7 +128,6 @@ pub fn build(app: &adw::Application) {
 
     let header = adw::HeaderBar::new();
     let window_title = adw::WindowTitle::new("Hanzi", "Mandarin vocabulary");
-    header.set_title_widget(Some(&window_title));
 
     let back_button = gtk::Button::from_icon_name("go-previous-symbolic");
     back_button.add_css_class("flat");
@@ -143,17 +145,47 @@ pub fn build(app: &adw::Application) {
     write_button.set_tooltip_text(Some("Write the character from the pinyin and translation"));
     mode_switch.append(&quiz_button);
     mode_switch.append(&write_button);
-    header.pack_start(&mode_switch);
+
+    let search_entry = gtk::SearchEntry::new();
+    search_entry.set_placeholder_text(Some("Search pinyin, hanzi or meaning"));
+    search_entry.set_tooltip_text(Some("Search pinyin, characters, words or meanings"));
+    search_entry.set_width_chars(18);
+    search_entry.set_max_width_chars(24);
+
+    let search_results = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    search_results.set_halign(gtk::Align::Center);
+    search_results.set_margin_top(16);
+    search_results.set_margin_bottom(16);
+    search_results.set_margin_start(12);
+    search_results.set_margin_end(12);
+    search_results.set_size_request(560, -1);
+
+    let search_root = gtk::ScrolledWindow::new();
+    search_root.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    search_root.set_vexpand(true);
+    search_root.set_child(Some(&search_results));
 
     let audio_check = gtk::CheckButton::with_label("Audio prompt");
     audio_check.set_margin_start(6);
     audio_check.set_tooltip_text(Some(
         "Play the character and hide its glyph, pinyin and meaning; uncheck to show the text prompt",
     ));
+    let controls = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    controls.set_margin_top(10); // To not overlap with bottom of window_title
+    controls.set_halign(gtk::Align::Center);
+    controls.append(&mode_switch);
+    controls.append(&search_entry);
     // Hidden while audio is disabled; the playback code stays in place.
     if crate::audio::ENABLED {
-        header.pack_start(&audio_check);
+        controls.append(&audio_check);
     }
+
+    let title_area = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    title_area.set_halign(gtk::Align::Center);
+    window_title.set_halign(gtk::Align::Center);
+    title_area.append(&window_title);
+    title_area.append(&controls);
+    header.set_title_widget(Some(&title_area));
 
     let about_button = gtk::Button::from_icon_name("help-about-symbolic");
     about_button.set_tooltip_text(Some("About Hanzi"));
@@ -208,6 +240,7 @@ pub fn build(app: &adw::Application) {
     stack.add_named(&group_root, Some("group"));
     stack.add_named(&review_root, Some("review"));
     stack.add_named(&summary, Some("summary"));
+    stack.add_named(&search_root, Some("search"));
 
     let toolbar = adw::ToolbarView::new();
     toolbar.add_top_bar(&header);
@@ -250,6 +283,9 @@ pub fn build(app: &adw::Application) {
         audio_prompt_panel,
         custom_group_popover,
         custom_group_box,
+        search_entry: search_entry.clone(),
+        search_results,
+        search_return: RefCell::new(None),
         writing_pad,
         hint,
         summary,
@@ -329,6 +365,14 @@ pub fn build(app: &adw::Application) {
         summary_back_button.connect_clicked(move |_| ui.back_to_group());
     }
     {
+        let weak = Rc::downgrade(&ui);
+        ui.search_entry.connect_changed(move |_| {
+            if let Some(ui) = weak.upgrade() {
+                ui.search_changed();
+            }
+        });
+    }
+    {
         let window = window.clone();
         about_button.connect_clicked(move |_| show_about(&window));
     }
@@ -388,7 +432,7 @@ pub fn build(app: &adw::Application) {
                     } else {
                         glib::Propagation::Proceed
                     }
-                }
+                },
                 Mode::Write => {
                     if revealed {
                         if matches!(character, ' ' | '\r' | '\n') {
@@ -404,7 +448,7 @@ pub fn build(app: &adw::Application) {
                     }
 
                     glib::Propagation::Proceed
-                }
+                },
             }
         });
     }
@@ -428,12 +472,12 @@ impl Ui {
                     card.connect_clicked(move |_| ui.open_group(group.clone()));
                     self.groups_box.append(&card);
                 }
-            }
+            },
             Ok(_) => {
                 let label = gtk::Label::new(Some("No groups in the database."));
                 label.add_css_class("dim-label");
                 self.groups_box.append(&label);
-            }
+            },
             Err(error) => eprintln!("hanzi: could not read groups: {error:#}"),
         }
     }
@@ -458,7 +502,7 @@ impl Ui {
             Err(error) => {
                 eprintln!("hanzi: could not read group {}: {error:#}", group.id);
                 return;
-            }
+            },
         };
         let levels = self.db.mastery_levels(&group.id).unwrap_or_default();
 
@@ -496,7 +540,7 @@ impl Ui {
             Err(error) => {
                 eprintln!("hanzi: could not read group {}: {error:#}", group.id);
                 return;
-            }
+            },
         };
         if entries.is_empty() {
             return;
@@ -526,6 +570,7 @@ impl Ui {
         self.stack.set_visible_child_name("review");
         self.back_button.set_visible(true);
         self.show_current();
+        gtk::prelude::GtkWindowExt::set_focus(&self.window, None::<&gtk::Widget>);
     }
 
     fn show_current(&self) {
@@ -586,7 +631,7 @@ impl Ui {
                         "1–4 choose · Space continues"
                     });
                 }
-            }
+            },
             Mode::Write => {
                 self.answer_grid.set_visible(false);
                 self.writing_pad.set_entry(&entry);
@@ -615,7 +660,7 @@ impl Ui {
                         "Write from memory · H hint"
                     });
                 }
-            }
+            },
         }
 
         self.progress_label
@@ -859,6 +904,9 @@ impl Ui {
             .unwrap_or_default();
 
         match page.as_str() {
+            "search" => {
+                self.search_entry.set_text("");
+            },
             "group" => self.show_groups(),
             "review" | "summary" => {
                 let has_group = self.current_group.borrow().is_some();
@@ -867,8 +915,8 @@ impl Ui {
                 } else {
                     self.show_groups();
                 }
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
 
@@ -977,7 +1025,7 @@ impl Ui {
                 self.hint
                     .set_text(&format!("Added {} to “{}”", entry.simplified, group_name));
                 self.populate_groups();
-            }
+            },
             Ok(false) => self.hint.set_text(&format!(
                 "{} is already in “{}”",
                 entry.simplified, group_name
@@ -985,7 +1033,7 @@ impl Ui {
             Err(error) => {
                 eprintln!("hanzi: could not add to group: {error:#}");
                 self.hint.set_text("Could not add to a group.");
-            }
+            },
         }
         popover.popdown();
     }
@@ -1004,11 +1052,11 @@ impl Ui {
                 }
                 self.populate_groups();
                 self.hint.set_text(&format!("Created “{name}”."));
-            }
+            },
             Err(error) => {
                 eprintln!("hanzi: could not create group: {error:#}");
                 self.hint.set_text("Could not create a group.");
-            }
+            },
         }
         popover.popdown();
     }
@@ -1044,7 +1092,7 @@ impl Ui {
                         Ok(_) => {
                             ui.current_group.replace(None);
                             ui.show_groups();
-                        }
+                        },
                         Err(error) => eprintln!("hanzi: could not delete group: {error:#}"),
                     }
                 }
@@ -1062,6 +1110,91 @@ impl Ui {
             )));
         } else {
             self.glyph.set_tooltip_text(None);
+        }
+    }
+
+    fn leave_search(&self) {
+        if self.stack.visible_child_name().as_deref() == Some("search") {
+            let previous = self
+                .search_return
+                .take()
+                .unwrap_or_else(|| "groups".to_string());
+            self.stack.set_visible_child_name(&previous);
+            self.back_button.set_visible(previous != "groups");
+        }
+    }
+
+    fn search_changed(self: &Rc<Self>) {
+        while let Some(child) = self.search_results.first_child() {
+            self.search_results.remove(&child);
+        }
+
+        let query = self.search_entry.text();
+        if query.trim().is_empty() {
+            self.leave_search();
+            return;
+        }
+
+        if self.stack.visible_child_name().as_deref() != Some("search") {
+            let previous = self
+                .stack
+                .visible_child_name()
+                .map(|name| name.to_string())
+                .unwrap_or_else(|| "groups".to_string());
+            self.search_return.replace(Some(previous));
+            self.stack.set_visible_child_name("search");
+            self.back_button.set_visible(true);
+        }
+
+        let entries = self
+            .db
+            .search_entries(query.as_str(), 20)
+            .unwrap_or_default();
+        if entries.is_empty() {
+            let empty = gtk::Label::new(Some("No matches."));
+            empty.add_css_class("dim-label");
+            empty.set_halign(gtk::Align::Center);
+            empty.set_margin_top(24);
+            self.search_results.append(&empty);
+        } else {
+            for entry in entries {
+                let button = gtk::Button::new();
+                button.add_css_class("flat");
+                button.add_css_class("search-result");
+                button.set_halign(gtk::Align::Fill);
+
+                let glyph = gtk::Label::new(Some(&entry.simplified));
+                glyph.add_css_class("search-glyph");
+                glyph.set_valign(gtk::Align::Center);
+
+                let text = gtk::Box::new(gtk::Orientation::Vertical, 1);
+                text.set_hexpand(true);
+                let pinyin = gtk::Label::new(Some(&entry.display_pinyin()));
+                pinyin.add_css_class("search-pinyin");
+                pinyin.set_halign(gtk::Align::Start);
+                let meaning = gtk::Label::new(Some(&entry.meaning));
+                meaning.add_css_class("dim-label");
+                meaning.set_halign(gtk::Align::Start);
+                meaning.set_ellipsize(gtk::pango::EllipsizeMode::End);
+                meaning.set_max_width_chars(42);
+                text.append(&pinyin);
+                text.append(&meaning);
+
+                let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+                row.append(&glyph);
+                row.append(&text);
+                button.set_child(Some(&row));
+
+                let weak = Rc::downgrade(self);
+                let picked = entry.clone();
+                button.connect_clicked(move |_| {
+                    if let Some(ui) = weak.upgrade() {
+                        ui.start_single(picked.clone());
+                        ui.search_entry.set_text("");
+                    }
+                });
+                self.search_results.append(&button);
+            }
         }
     }
 

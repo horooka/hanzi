@@ -47,6 +47,27 @@
   background-color: alpha(@accent_bg_color, 0.12);
 }
 
+.search-result {
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+
+.search-result:hover {
+  background-color: alpha(@accent_bg_color, 0.12);
+}
+
+.search-glyph {
+  font-family: "Noto Sans CJK SC", "Source Han Sans SC", "Noto Sans SC", sans-serif;
+  font-size: 24px;
+  min-width: 32px;
+}
+
+.search-pinyin {
+  color: @accent_color;
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .audio-prompt-play {
   min-width: 56px;
   min-height: 56px;

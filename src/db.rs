@@ -506,6 +506,87 @@ impl Db {
         }
         Ok(meanings)
     }
+
+    pub fn search_entries(&self, query: &str, limit: usize) -> Result<Vec<VocabEntry>> {
+        let raw = query.trim().to_lowercase();
+        if raw.is_empty() {
+            return Ok(Vec::new());
+        }
+        // Pinyin is stored with tone numbers and spaces ("ni3 hao3"). Build a
+        // compact form so "ni hao", "nihao" and "ni3hao3" all match.
+        let compact: String = raw
+            .chars()
+            .filter(|c| c.is_ascii_alphabetic() || *c == 'ü')
+            .map(|c| if c == 'ü' { 'v' } else { c })
+            .collect();
+
+        let allow_meaning = raw.chars().count() >= 3;
+        let compact_match = compact.chars().count() >= 3;
+        let mut statement = self.conn.prepare(
+            r#"
+            WITH searchable AS (
+                SELECT id, simplified, traditional, pinyin, meaning, hsk,
+                       lower(simplified) AS simp_l,
+                       lower(traditional) AS trad_l,
+                       lower(pinyin) AS pinyin_l,
+                       lower(meaning) AS meaning_l,
+                       lower(replace(replace(replace(replace(replace(replace(pinyin,
+                           '1',''),'2',''),'3',''),'4',''),'5',''), ' ', '')) AS pinyin_compact
+                FROM vocab
+            )
+            SELECT id, simplified, traditional, pinyin, meaning, hsk
+            FROM searchable
+            WHERE instr(simp_l, ?1) > 0
+               OR instr(trad_l, ?1) > 0
+               OR (?4 = 1 AND instr(meaning_l, ?1) > 0)
+               OR EXISTS (
+                   SELECT 1 FROM syllables sy
+                   WHERE sy.vocab_id = searchable.id
+                     AND (sy.key = ?1 OR sy.key LIKE ?1 || '%')
+               )
+               OR (?5 = 1 AND instr(pinyin_compact, ?2) > 0)
+            ORDER BY
+                CASE
+                    WHEN simp_l = ?1 THEN 0
+                    WHEN pinyin_l = ?1 THEN 1
+                    WHEN instr(simp_l, ?1) = 1 THEN 2
+                    WHEN instr(pinyin_l, ?1) = 1 THEN 3
+                    WHEN ?5 = 1 AND instr(pinyin_compact, ?2) = 1 THEN 4
+                    ELSE 5
+                END,
+                hsk,
+                length(simplified),
+                simplified
+            LIMIT ?3
+            "#,
+        )?;
+
+        let rows = statement.query_map(
+            params![
+                raw,
+                compact,
+                limit as i64,
+                allow_meaning as i64,
+                compact_match as i64
+            ],
+            |row| {
+                Ok(VocabEntry {
+                    id: row.get(0)?,
+                    simplified: row.get(1)?,
+                    traditional: row.get(2)?,
+                    pinyin: row.get(3)?,
+                    meaning: row.get(4)?,
+                    hsk: row.get(5)?,
+                })
+            },
+        )?;
+
+        let mut found = Vec::new();
+        for row in rows {
+            found.push(row?);
+        }
+        Ok(found)
+    }
 }
 
 fn data_dir() -> PathBuf {
@@ -587,6 +668,20 @@ mod tests {
         let entries = db.group_entries(&group_id).expect("group entries");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].id, vocab_id);
+
+        let ai = db.search_entries("ai", 20).expect("pinyin search");
+        assert!(ai.iter().any(|entry| entry.simplified == "爱"));
+        assert!(!ai.iter().any(|entry| entry.simplified == "买"));
+        assert!(db
+            .search_entries("爱", 20)
+            .expect("character search")
+            .iter()
+            .any(|entry| entry.simplified == "爱"));
+        assert!(db
+            .search_entries("love", 20)
+            .expect("meaning search")
+            .iter()
+            .any(|entry| entry.meaning.contains("love")));
 
         let summary = db
             .groups()
