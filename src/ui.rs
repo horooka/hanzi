@@ -58,6 +58,7 @@ struct ReviewWidgets {
     answer_buttons: Vec<gtk::Button>,
     answer_labels: Vec<gtk::Label>,
     answer_feedback: gtk::Label,
+    stage: gtk::Stack,
     continue_button: gtk::Button,
     audio_prompt_panel: gtk::Box,
     audio_prompt_play_button: gtk::Button,
@@ -96,6 +97,7 @@ struct Ui {
     answer_buttons: Vec<gtk::Button>,
     answer_labels: Vec<gtk::Label>,
     answer_feedback: gtk::Label,
+    stage: gtk::Stack,
     continue_button: gtk::Button,
     audio_prompt: Cell<bool>,
     audio_prompt_panel: gtk::Box,
@@ -118,6 +120,12 @@ pub fn build(app: &adw::Application) {
         },
     };
     let audio = Audio::new();
+    let initial_scheme = db
+        .setting("color_scheme")
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "system".to_string());
+    apply_color_scheme(&initial_scheme);
 
     let window = adw::ApplicationWindow::builder()
         .application(app)
@@ -187,9 +195,88 @@ pub fn build(app: &adw::Application) {
     title_area.append(&controls);
     header.set_title_widget(Some(&title_area));
 
+    let theme_button = gtk::MenuButton::builder()
+        .icon_name(if adw::StyleManager::default().is_dark() {
+            "weather-clear-night-symbolic"
+        } else {
+            "weather-clear-symbolic"
+        })
+        .tooltip_text("Appearance")
+        .build();
+    theme_button.add_css_class("flat");
+
+    let theme_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    theme_box.set_margin_top(10);
+    theme_box.set_margin_bottom(10);
+    theme_box.set_margin_start(12);
+    theme_box.set_margin_end(12);
+    let theme_title = gtk::Label::new(Some("Appearance"));
+    theme_title.add_css_class("heading");
+    theme_title.set_halign(gtk::Align::Start);
+    theme_box.append(&theme_title);
+
+    let system_button = gtk::CheckButton::with_label("Follow system");
+    let light_button = gtk::CheckButton::with_label("Light");
+    let dark_button = gtk::CheckButton::with_label("Dark");
+    light_button.set_group(Some(&system_button));
+    dark_button.set_group(Some(&system_button));
+    match initial_scheme.as_str() {
+        "light" => light_button.set_active(true),
+        "dark" => dark_button.set_active(true),
+        _ => system_button.set_active(true),
+    }
+    for button in [&system_button, &light_button, &dark_button] {
+        button.set_halign(gtk::Align::Start);
+        theme_box.append(button);
+    }
+    let theme_popover = gtk::Popover::new();
+    theme_popover.set_child(Some(&theme_box));
+    theme_button.set_popover(Some(&theme_popover));
+
+    {
+        let db = Rc::clone(&db);
+        system_button.connect_toggled(move |button| {
+            if button.is_active() {
+                apply_color_scheme("system");
+                let _ = db.set_setting("color_scheme", "system");
+            }
+        });
+    }
+    {
+        let db = Rc::clone(&db);
+        light_button.connect_toggled(move |button| {
+            if button.is_active() {
+                apply_color_scheme("light");
+                let _ = db.set_setting("color_scheme", "light");
+            }
+        });
+    }
+    {
+        let db = Rc::clone(&db);
+        dark_button.connect_toggled(move |button| {
+            if button.is_active() {
+                apply_color_scheme("dark");
+                let _ = db.set_setting("color_scheme", "dark");
+            }
+        });
+    }
+    {
+        let theme_button = theme_button.clone();
+        adw::StyleManager::default().connect_dark_notify(move |manager| {
+            theme_button.set_icon_name(if manager.is_dark() {
+                "weather-clear-night-symbolic"
+            } else {
+                "weather-clear-symbolic"
+            });
+        });
+    }
+
     let about_button = gtk::Button::from_icon_name("help-about-symbolic");
     about_button.set_tooltip_text(Some("About Hanzi"));
-    header.pack_end(&about_button);
+    let header_end = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    header_end.append(&theme_button);
+    header_end.append(&about_button);
+    header.pack_end(&header_end);
 
     let stack = gtk::Stack::builder()
         .transition_type(gtk::StackTransitionType::Crossfade)
@@ -225,6 +312,7 @@ pub fn build(app: &adw::Application) {
         answer_buttons,
         answer_labels,
         answer_feedback,
+        stage,
         continue_button,
         audio_prompt_panel,
         audio_prompt_play_button,
@@ -278,6 +366,7 @@ pub fn build(app: &adw::Application) {
         answer_buttons,
         answer_labels,
         answer_feedback,
+        stage,
         continue_button: continue_button.clone(),
         audio_prompt: Cell::new(false),
         audio_prompt_panel,
@@ -601,6 +690,8 @@ impl Ui {
 
         match self.mode.get() {
             Mode::Quiz => {
+                self.stage.set_size_request(-1, 188);
+                self.stage.set_visible_child_name("choices");
                 self.answer_grid.set_visible(true);
                 self.setup_choices(&entry);
 
@@ -633,6 +724,8 @@ impl Ui {
                 }
             },
             Mode::Write => {
+                self.stage.set_size_request(-1, -1);
+                self.stage.set_visible_child_name("reveal");
                 self.answer_grid.set_visible(false);
                 self.writing_pad.set_entry(&entry);
                 self.writing_pad.root().set_visible(true);
@@ -740,7 +833,7 @@ impl Ui {
 
     fn reset_answer_state(&self) {
         self.made_mistake.set(false);
-        self.answer_feedback.set_visible(false);
+        self.answer_feedback.set_text(" ");
         self.continue_button.set_visible(false);
 
         for button in &self.answer_buttons {
@@ -802,7 +895,8 @@ impl Ui {
             self.glyph.set_visible(true);
             self.pinyin.set_visible(true);
             self.meaning.set_visible(true);
-            self.answer_feedback.set_visible(false);
+            self.answer_feedback.set_text(" ");
+            self.stage.set_visible_child_name("reveal");
             self.session.borrow_mut().revealed = true;
 
             let entry = {
@@ -848,7 +942,6 @@ impl Ui {
             self.answer_buttons[index].set_sensitive(false);
             self.answer_feedback
                 .set_text("Not quite — try another one.");
-            self.answer_feedback.set_visible(true);
         }
     }
 
@@ -1386,6 +1479,8 @@ fn build_review() -> ReviewWidgets {
     meaning.set_halign(gtk::Align::Center);
     meaning.set_justify(gtk::Justification::Center);
     meaning.set_wrap(true);
+    meaning.set_lines(3);
+    meaning.set_ellipsize(gtk::pango::EllipsizeMode::End);
     meaning.set_max_width_chars(34);
     meaning.set_visible(false);
 
@@ -1449,10 +1544,11 @@ fn build_review() -> ReviewWidgets {
         answer_labels.push(text);
     }
 
-    let answer_feedback = gtk::Label::new(None);
+    // Keep the feedback line allocated even when empty so that a wrong
+    // answer does not resize the card.
+    let answer_feedback = gtk::Label::new(Some(" "));
     answer_feedback.add_css_class("answer-feedback");
     answer_feedback.set_halign(gtk::Align::Center);
-    answer_feedback.set_visible(false);
 
     let writing_pad = WritingPad::new();
     writing_pad.root().set_visible(false);
@@ -1469,16 +1565,36 @@ fn build_review() -> ReviewWidgets {
     actions.append(&audio_button);
     actions.append(&custom_group_button);
 
+    // The quiz choices and the revealed pinyin/meaning occupy the same box.
+    // In quiz mode that box has a fixed height, so revealing the answer never
+    // moves the character, the buttons, or the rest of the card.
+    let choices = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    choices.set_halign(gtk::Align::Fill);
+    choices.set_valign(gtk::Align::Center);
+    choices.append(&answer_grid);
+    choices.append(&answer_feedback);
+
+    let reveal = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    reveal.set_halign(gtk::Align::Fill);
+    reveal.set_valign(gtk::Align::Center);
+    reveal.append(&pinyin);
+    reveal.append(&meaning);
+    reveal.append(&continue_button);
+
+    let stage = gtk::Stack::new();
+    stage.set_vhomogeneous(false);
+    stage.set_transition_type(gtk::StackTransitionType::Crossfade);
+    stage.set_transition_duration(140);
+    stage.add_named(&choices, Some("choices"));
+    stage.add_named(&reveal, Some("reveal"));
+    stage.set_visible_child_name("choices");
+
     card.append(&glyph);
     card.append(&traditional);
     card.append(&actions);
-    card.append(&pinyin);
-    card.append(&meaning);
     card.append(&audio_prompt_panel);
-    card.append(&answer_grid);
-    card.append(&answer_feedback);
+    card.append(&stage);
     card.append(writing_pad.root());
-    card.append(&continue_button);
 
     let hint = gtk::Label::new(Some("1–4 choose · P plays · Space continues"));
     hint.add_css_class("hint");
@@ -1510,6 +1626,7 @@ fn build_review() -> ReviewWidgets {
         answer_buttons,
         answer_labels,
         answer_feedback,
+        stage,
         continue_button,
         audio_prompt_panel,
         audio_prompt_play_button,
@@ -1598,6 +1715,16 @@ fn make_group_card(group: &GroupSummary) -> gtk::Button {
     content.append(&arrow);
     card.set_child(Some(&content));
     card
+}
+
+fn apply_color_scheme(scheme: &str) {
+    let manager = adw::StyleManager::default();
+    let color_scheme = match scheme {
+        "light" => adw::ColorScheme::ForceLight,
+        "dark" => adw::ColorScheme::ForceDark,
+        _ => adw::ColorScheme::Default,
+    };
+    manager.set_color_scheme(color_scheme);
 }
 
 fn show_about(parent: &adw::ApplicationWindow) {
