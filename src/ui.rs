@@ -1738,8 +1738,8 @@ fn show_about(parent: &adw::ApplicationWindow) {
         .developers(["horooka"])
         .comments(
             "Stroke-order data: Make Me a Hanzi / hanzi-writer-data \
-             (Arphic Public License). Definitions adapted from CC-CEDICT \
-             (CC BY-SA 4.0).",
+             (Arphic Public License). Definitions adapted from CC-CEDICT and \
+             the HSK 3.0 2025 vocabulary dataset (CC BY-SA 4.0).",
         )
         .build();
 

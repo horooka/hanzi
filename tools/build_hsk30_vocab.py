@@ -1,38 +1,46 @@
 #!/usr/bin/env python3
-"""Build the HSK 3.0 deck: 899 characters + ~1650 multi-character words.
+"""Build the HSK 3.0 (2025 syllabus) deck.
 
 Sources:
-  * ``tools/hsk30-1-3-chars.txt``             character readings and levels
-  * HSK 3.0 word lists (levels 1-3)            words and readings
-  * CC-CEDICT                                  English glosses and traditional forms
+  * ``tools/hsk30-2025-chars.txt``      recognition characters, readings, levels
+  * HSK 3.0 2025 word list (CSV)        words, pinyin, levels, glosses
+  * CC-CEDICT                           glosses and traditional forms for characters
+  * ``tools/legacy-ids.json``           entry IDs from the 2021 deck
 
 Run:
 
     python tools/build_hsk30_vocab.py \
-      --words-csv /tmp/hsk30.csv \
-      --cedict /tmp/cedict.txt
+      --words-csv /tmp/hsk30-2025.csv \
+      --cedict /tmp/cedict.txt \
+      --levels 1-5
 
-The output ``data/vocab.json`` (version 4) is embedded in the app. Custom lists
-are stored in SQLite, not here, so re-running this script never touches them.
+The output ``data/vocab.json`` is embedded in the app.  Custom groups and
+mastery live in SQLite, so re-running this script never touches them.  IDs
+from the previous deck are reused by simplified form, which keeps existing
+mastery when words move between levels.
 """
 
 from __future__ import annotations
 
 import argparse
+import collections
 import csv
 import json
 import pathlib
 import re
+import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-CHARS = ROOT / "tools" / "hsk30-1-3-chars.txt"
+CHARS = ROOT / "tools" / "hsk30-2025-chars.txt"
+LEGACY_IDS = ROOT / "tools" / "legacy-ids.json"
 OUTPUT = ROOT / "data" / "vocab.json"
 
 CJK = re.compile(r"[\u4e00-\u9fff]")
 CEDICT_LINE = re.compile(r"^(\S+)\s+(\S+)\s+\[([^\]]+)\]\s+/(.*)/\s*$")
+NUMBERED_SYLLABLE = re.compile(r"^[a-z]+[1-5]$")
 SKIP_DEF = re.compile(
-    r"^(variant of|old variant of|erhua variant of|erhua form of|used in|see |also written|"
-    r"also pr\.|Japanese variant|abbr\. for|CL:)",
+    r"^(variant of|old variant of|erhua variant of|erhua form of|used in|see |"
+    r"also written|also pr\.|Japanese variant|abbr\. for|CL:|Taiwan pr\.)",
     re.IGNORECASE,
 )
 MARKER_PAREN = re.compile(
@@ -45,12 +53,122 @@ VARIANT = re.compile(
 )
 REFERENCE = re.compile(r"^(used in|see)\s+([^\[]+)\[", re.IGNORECASE)
 
+# Accented vowel -> (base vowel, tone digit); ü is written v in numbered pinyin.
+TONE_MAP = {
+    "ā": ("a", 1), "á": ("a", 2), "ǎ": ("a", 3), "à": ("a", 4),
+    "ē": ("e", 1), "é": ("e", 2), "ě": ("e", 3), "è": ("e", 4),
+    "ī": ("i", 1), "í": ("i", 2), "ǐ": ("i", 3), "ì": ("i", 4),
+    "ō": ("o", 1), "ó": ("o", 2), "ǒ": ("o", 3), "ò": ("o", 4),
+    "ū": ("u", 1), "ú": ("u", 2), "ǔ": ("u", 3), "ù": ("u", 4),
+    "ǖ": ("v", 1), "ǘ": ("v", 2), "ǚ": ("v", 3), "ǜ": ("v", 4),
+    "ü": ("v", 0),
+}
+
+
+def to_numbered(syllable: str) -> str:
+    tone = 5
+    out = []
+    for char in syllable:
+        if char in TONE_MAP:
+            base, digit = TONE_MAP[char]
+            out.append(base)
+            if digit:
+                tone = digit
+        else:
+            out.append(char)
+    return "".join(out) + str(tone)
+
+
+def clean_word(raw: str) -> str:
+    word = str(raw).split("|")[0]
+    word = re.sub(r"（[^）]*）", "", word)
+    word = re.sub(r"\([^)]*\)", "", word)
+    word = re.sub(r"\d+$", "", word)
+    return "".join(CJK.findall(word))
+
+
+def level_rank(level: str) -> int:
+    return 7 if level == "7-9" else int(level)
+
+
+def parse_levels(text: str) -> list[int]:
+    levels: set[int] = set()
+    for part in text.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            start, end = part.split("-", 1)
+            levels.update(range(int(start), int(end) + 1))
+        else:
+            levels.add(int(part))
+    return sorted(levels)
+
 
 def cap_meaning(text: str, limit: int = 70) -> str:
+    text = " ".join(text.split())
     if len(text) <= limit:
         return text
     cut = text.rfind(" ", 0, limit - 3)
-    return text[: cut if cut > 30 else limit - 1] + "…"
+    if cut < 30:
+        cut = limit - 1
+    result = text[:cut].rstrip(" ;,")
+    # Do not leave an unfinished parenthetical at the cut.
+    while result.count("(") > result.count(")"):
+        result = result[: result.rfind("(")].rstrip(" ;,")
+    return result + "…"
+
+
+def load_cedict(
+    path: pathlib.Path,
+) -> dict[str, list[tuple[tuple[str, ...], list[str], str, bool]]]:
+    by_word: dict[str, list[tuple[tuple[str, ...], list[str], str, bool]]] = {}
+    with path.open(encoding="utf-8") as handle:
+        for line in handle:
+            if line.startswith("#"):
+                continue
+            match = CEDICT_LINE.match(line)
+            if not match:
+                continue
+            traditional, simplified, pinyin, raw_defs = match.groups()
+            defs = [part.strip() for part in raw_defs.split("/") if part.strip()]
+            proper = any(part[:1].isupper() for part in pinyin.split())
+            by_word.setdefault(simplified, []).append(
+                (normalize_pinyin(pinyin), defs, traditional, proper)
+            )
+    return by_word
+
+
+def normalize_pinyin(pinyin: str) -> tuple[str, ...]:
+    return tuple(
+        part.lower().replace("u:", "v").replace("ü", "v") for part in pinyin.split()
+    )
+
+
+def clean_defs(defs: list[str]) -> list[str]:
+    cleaned: list[str] = []
+    for text in defs:
+        if re.match(r"^surname\s+[A-Z]", text):
+            continue
+        if SKIP_DEF.match(text):
+            continue
+        text = MARKER_PAREN.sub("", text).strip()
+        text = re.sub(r"\s*\(CL:[^)]*\)", "", text)
+        text = re.sub(r"[;, ]+Taiwan pr\..*$", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\{[^}]*\}", "", text)
+        text = re.sub(r"\[[^\]]*\]", "", text)
+        text = re.sub(r"[\u4e00-\u9fff]+\|([\u4e00-\u9fff]+)", r"\1", text)
+        text = re.sub(r"\s{2,}", " ", text).strip()
+        text = text.rstrip(" ;,")
+        if text and text not in cleaned:
+            cleaned.append(text)
+    return cleaned
+
+
+def short_meaning(defs: list[str], limit: int = 70) -> str:
+    cleaned = clean_defs(defs) or defs
+    meaning = "; ".join(cleaned[:2]) if cleaned else "—"
+    return cap_meaning(meaning, limit)
 
 
 def variant_meaning(
@@ -85,7 +203,6 @@ def variant_meaning(
         if base_defs:
             return short_meaning(base_defs)
 
-    # "used in X" / "see X" references carry no meaning of their own.
     for text in defs:
         match = REFERENCE.match(text)
         if not match:
@@ -102,101 +219,50 @@ def variant_meaning(
 
     return "—"
 
-# Accented vowel -> (base vowel, tone digit); ü is written v in numbered pinyin.
-TONE_MAP = {
-    "ā": ("a", 1), "á": ("a", 2), "ǎ": ("a", 3), "à": ("a", 4),
-    "ē": ("e", 1), "é": ("e", 2), "ě": ("e", 3), "è": ("e", 4),
-    "ī": ("i", 1), "í": ("i", 2), "ǐ": ("i", 3), "ì": ("i", 4),
-    "ō": ("o", 1), "ó": ("o", 2), "ǒ": ("o", 3), "ò": ("o", 4),
-    "ū": ("u", 1), "ú": ("u", 2), "ǔ": ("u", 3), "ù": ("u", 4),
-    "ǖ": ("v", 1), "ǘ": ("v", 2), "ǚ": ("v", 3), "ǜ": ("v", 4),
-    "ü": ("v", 0),
-}
-
-# Words missing from CC-CEDICT (or with mismatched pinyin): manual fallback.
-WORD_OVERRIDES = {
-    "车上": ("che1 shang4", "on the vehicle; in the car", "車上"),
-    "是不是": ("shi4 bu5 shi4", "is it or not; is it?", "是不是"),
-    "不太": ("bu4 tai4", "not very; not too", "不太"),
-    "不一会儿": ("bu4 yi1 hui4 r5", "in a moment; shortly", "不一會兒"),
-    "见过": ("jian4 guo5", "have seen (before)", "見過"),
-    "送到": ("song4 dao4", "deliver to; send to", "送到"),
-    "这时候": ("zhe4 shi2 hou5", "at this time; now", "這時候"),
-    "放到": ("fang4 dao4", "put onto; put in", "放到"),
-    "能不能": ("neng2 bu5 neng2", "can or cannot; is that possible?", "能不能"),
-}
-
-
-def to_numbered(syllable: str) -> str:
-    tone = 5
-    out = []
-    for char in syllable:
-        if char in TONE_MAP:
-            base, digit = TONE_MAP[char]
-            out.append(base)
-            if digit:
-                tone = digit
-        else:
-            out.append(char)
-    return "".join(out) + str(tone)
-
-
-def normalize_pinyin(pinyin: str) -> tuple[str, ...]:
-    return tuple(
-        part.lower().replace("u:", "v").replace("ü", "v") for part in pinyin.split()
-    )
-
-
-def load_cedict(
-    path: pathlib.Path,
-) -> dict[str, list[tuple[tuple[str, ...], list[str], str, bool]]]:
-    by_word: dict[str, list[tuple[tuple[str, ...], list[str], str, bool]]] = {}
-    with path.open(encoding="utf-8") as handle:
-        for line in handle:
-            if line.startswith("#"):
-                continue
-            match = CEDICT_LINE.match(line)
-            if not match:
-                continue
-            traditional, simplified, pinyin, raw_defs = match.groups()
-            defs = [part.strip() for part in raw_defs.split("/") if part.strip()]
-            proper = any(part[:1].isupper() for part in pinyin.split())
-            by_word.setdefault(simplified, []).append(
-                (normalize_pinyin(pinyin), defs, traditional, proper)
-            )
-    return by_word
-
-
-def clean_defs(defs: list[str]) -> list[str]:
-    cleaned: list[str] = []
-    for text in defs:
-        if re.match(r"^surname\s+[A-Z]", text):
-            continue
-        if SKIP_DEF.match(text):
-            continue
-        text = MARKER_PAREN.sub("", text).strip()
-        text = re.sub(r"\{[^}]*\}", "", text)
-        text = re.sub(r"\[[^\]]*\]", "", text)
-        text = re.sub(r"[\u4e00-\u9fff]+\|([\u4e00-\u9fff]+)", r"\1", text)
-        text = re.sub(r"\s{2,}", " ", text).strip()
-        text = text.rstrip(" ;,")
-        if text and text not in cleaned:
-            cleaned.append(text)
-    return cleaned
-
-
-def short_meaning(defs: list[str], limit: int = 70) -> str:
-    cleaned = clean_defs(defs) or defs
-    meaning = "; ".join(cleaned[:2]) if cleaned else "—"
-    return cap_meaning(meaning, limit)
-
 
 def with_erhua_note(meaning: str) -> str:
     """Mark erhua forms without naming the base word (no quiz hints)."""
-    if meaning == "—":
+    if meaning == "—" or "(erhua form)" in meaning:
         return meaning
     base = meaning.rstrip("…").strip()
     return cap_meaning(f"{cap_meaning(base, 55)} (erhua form)")
+
+
+def strip_leading_note(text: str) -> str:
+    """Drop a leading usage note when a real gloss follows it."""
+    text = " ".join(text.split())
+    if not text.startswith("("):
+        return text
+    depth = 0
+    for index, char in enumerate(text):
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                rest = text[index + 1 :].strip(" ;,")
+                return rest or text
+    return text
+
+
+WORD_MEANING_OVERRIDES = {
+    # CEDICT only has a usage note for this one.
+    "大厦": "large building; mansion; high-rise",
+}
+
+CHAR_MEANING_OVERRIDES = {
+    # CEDICT's first usable entry is a proper name or a reference note.
+    "巴": "bus (in 大巴); suffix (in 尾巴, 嘴巴)",
+    "啡": "coffee (in 咖啡)",
+    "构": "to construct; to form; structure",
+    "葡": "grape (in 葡萄)",
+    "圾": "garbage; rubbish (in 垃圾)",
+    "垃": "garbage; rubbish (in 垃圾)",
+    "奈": "helpless; to bear; how can one help",
+    "璃": "glass; glaze",
+    "筑": "to build; to construct",
+    "戚": "relatives; kin; grief",
+}
 
 
 def pick_cedict(
@@ -210,188 +276,286 @@ def pick_cedict(
     matches = [entry for entry in entries if entry[0] == syllables]
     matches.sort(key=lambda entry: entry[3])  # prefer common words over names
     candidates = matches or entries
-    # CEDICT sometimes lists a "variant of" entry before the real one. Prefer
-    # any entry that yields a usable gloss.
     for entry in candidates:
         if clean_defs(entry[1]):
             return entry[0], entry[1], entry[2]
     return candidates[0][0], candidates[0][1], candidates[0][2]
 
 
+class IdAllocator:
+    """Reuse IDs from the 2021 deck, then generate stable pinyin IDs."""
+
+    def __init__(self, legacy: dict[str, str]) -> None:
+        self.legacy = legacy
+        self.used: set[str] = set(legacy.values())
+        self.reused = 0
+        self.generated = 0
+
+    def for_entry(self, simplified: str, pinyin: str, is_word: bool) -> str:
+        legacy = self.legacy.get(simplified)
+        if legacy is not None:
+            self.reused += 1
+            return legacy
+
+        base = pinyin.replace(" ", "-") if is_word else pinyin
+        candidate = base
+        if candidate in self.used:
+            suffix = (
+                "".join(f"{ord(char):x}" for char in simplified)
+                if is_word
+                else f"{ord(simplified):x}"
+            )
+            candidate = f"{base}-{suffix}"
+            index = 2
+            while candidate in self.used:
+                candidate = f"{base}-{suffix}-{index}"
+                index += 1
+        self.used.add(candidate)
+        self.generated += 1
+        return candidate
+
+
+def read_char_table(
+    path: pathlib.Path, levels: set[int]
+) -> tuple[list[tuple[str, str, int]], list[str]]:
+    rows: list[tuple[str, str, int]] = []
+    problems: list[str] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        parts = line.split()
+        if len(parts) < 3:
+            problems.append(f"bad character row: {line}")
+            continue
+        char, pinyin, raw_level = parts[0], parts[1], parts[2]
+        level = level_rank(raw_level)
+        if level not in levels:
+            continue
+        if not NUMBERED_SYLLABLE.fullmatch(pinyin):
+            problems.append(f"bad character reading: {line}")
+            continue
+        rows.append((char, pinyin, level))
+    return rows, problems
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--chars", type=pathlib.Path, default=CHARS)
     parser.add_argument("--words-csv", type=pathlib.Path, required=True)
+    parser.add_argument("--chars", type=pathlib.Path, default=CHARS)
     parser.add_argument("--cedict", type=pathlib.Path, required=True)
+    parser.add_argument("--legacy-ids", type=pathlib.Path, default=LEGACY_IDS)
+    parser.add_argument("--levels", default="1-5")
+    parser.add_argument("--version", type=int, default=9)
     parser.add_argument("--output", type=pathlib.Path, default=OUTPUT)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
-    cedict = load_cedict(args.cedict)
+    levels = parse_levels(args.levels)
+    if not levels:
+        print("no levels selected", file=sys.stderr)
+        return 1
 
-    # --- characters -----------------------------------------------------
-    char_rows = []
-    for line in args.chars.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
+    cedict = load_cedict(args.cedict)
+    legacy = (
+        json.loads(args.legacy_ids.read_text(encoding="utf-8"))
+        if args.legacy_ids.exists()
+        else {}
+    )
+    allocator = IdAllocator(legacy)
+
+    char_rows, char_problems = read_char_table(args.chars, set(levels))
+    if char_problems:
+        for problem in char_problems:
+            print(f"warning: {problem}", file=sys.stderr)
+
+    word_rows = list(csv.DictReader(args.words_csv.open(encoding="utf-8-sig")))
+
+    # Single-character words can supply a gloss when CEDICT has no useful one
+    # for the character itself.
+    single_defs: dict[str, tuple[str, str]] = {}
+    for row in word_rows:
+        level = level_rank(row["level"])
+        if level not in levels:
             continue
-        parts = line.split()
-        char_rows.append((parts[0], parts[1], int(parts[2])))
+        word = clean_word(row["simplified"])
+        if len(word) == 1 and word not in single_defs:
+            single_defs[word] = (
+                row["definitions"].strip(),
+                row["traditional"].strip() or word,
+            )
 
     char_entries = []
-    char_ids_by_level: dict[int, list[str]] = {1: [], 2: [], 3: []}
-    used_char_ids: dict[str, int] = {}
-    for char, accented, level in char_rows:
-        numbered = to_numbered(accented)
-        used_char_ids[numbered] = used_char_ids.get(numbered, 0) + 1
-        entry_id = (
-            numbered
-            if used_char_ids[numbered] == 1
-            else f"{numbered}-{ord(char):x}"
-        )
-        chosen = pick_cedict(char, normalize_pinyin(numbered), cedict)
+    char_ids_by_level: dict[int, list[str]] = {level: [] for level in levels}
+    for char, pinyin, level in char_rows:
+        chosen = pick_cedict(char, tuple(pinyin.split()), cedict)
         if chosen:
             _pinyin, defs, traditional = chosen
+            meaning = variant_meaning(defs, cedict, char)
         else:
-            defs, traditional = [], char
-        char_entries.append(
-            {
-                "id": entry_id,
-                "simplified": char,
-                "traditional": traditional,
-                "pinyin": numbered,
-                "meaning": variant_meaning(defs, cedict, char),
-                "hsk": level,
-            }
-        )
-        char_ids_by_level[level].append(entry_id)
+            traditional = ""
+            meaning = "—"
 
-    # --- words ----------------------------------------------------------
-    rows = [
-        row
-        for row in csv.DictReader(args.words_csv.open(encoding="utf-8-sig"))
-        if row["Level"] in ("1", "2", "3")
-    ]
+        if meaning == "—" and char in single_defs:
+            fallback_meaning, fallback_traditional = single_defs[char]
+            meaning = cap_meaning(fallback_meaning)
+            traditional = traditional or fallback_traditional
+        meaning = CHAR_MEANING_OVERRIDES.get(char, meaning)
 
-    def clean_word(raw: str) -> str:
-        word = raw.split("|")[0]
-        word = re.sub(r"（[^）]*）", "", word)
-        word = re.sub(r"\d+$", "", word)
-        return "".join(CJK.findall(word))
+        entry = {
+            "id": allocator.for_entry(char, pinyin, False),
+            "simplified": char,
+            "traditional": traditional or char,
+            "pinyin": pinyin,
+            "meaning": meaning,
+            "hsk": level,
+        }
+        char_entries.append(entry)
+        char_ids_by_level[level].append(entry["id"])
 
     word_entries = []
-    word_ids_by_level: dict[int, list[str]] = {1: [], 2: [], 3: []}
+    word_ids_by_level: dict[int, list[str]] = {level: [] for level in levels}
     seen_words: set[str] = set()
-    used_word_ids: dict[str, int] = {}
     skipped: list[str] = []
-    for row in rows:
-        word = clean_word(row["Simplified"])
+    bad_pinyin: list[str] = []
+    for row in word_rows:
+        level = level_rank(row["level"])
+        if level not in levels:
+            continue
+        word = clean_word(row["simplified"])
         if len(word) < 2 or word in seen_words:
             continue
         seen_words.add(word)
-        level = int(row["Level"])
 
-        bracket = re.search(r"\[([^\]]+)\]", row["CEDICT"])
-        syllables = (
-            normalize_pinyin(bracket.group(1)) if bracket else ()
+        syllables = [to_numbered(syllable.lower()) for syllable in row["pinyin"].split()]
+        if not syllables or any(
+            not NUMBERED_SYLLABLE.fullmatch(syllable) for syllable in syllables
+        ):
+            bad_pinyin.append(f"{word}: {row['pinyin']!r}")
+            continue
+
+        pinyin = " ".join(syllables)
+        meaning = WORD_MEANING_OVERRIDES.get(
+            word, strip_leading_note(row["definitions"].strip())
         )
-        traditional = ""
-        if len(syllables) != len(word) or not syllables:
-            override = WORD_OVERRIDES.get(word)
-            if not override:
-                skipped.append(word)
-                continue
-            pinyin, meaning, traditional = override
-            syllables = tuple(pinyin.split())
-        else:
-            chosen = pick_cedict(word, syllables, cedict)
-            if not chosen:
-                override = WORD_OVERRIDES.get(word)
-                if not override:
-                    skipped.append(word)
-                    continue
-                pinyin, meaning, traditional = override
-                syllables = tuple(pinyin.split())
-            else:
-                _pinyin, defs, traditional = chosen
-                meaning = variant_meaning(defs, cedict, word)
-
-        if syllables and syllables[-1] == "r5":
+        meaning = cap_meaning(meaning)
+        if syllables[-1] == "r5":
             meaning = with_erhua_note(meaning)
 
-        pinyin_key = "-".join(syllables)
-        used_word_ids[pinyin_key] = used_word_ids.get(pinyin_key, 0) + 1
-        entry_id = (
-            pinyin_key
-            if used_word_ids[pinyin_key] == 1
-            else f"{pinyin_key}-{''.join(f'{ord(c):x}' for c in word)}"
+        entry = {
+            "id": allocator.for_entry(word, pinyin, True),
+            "simplified": word,
+            "traditional": row["traditional"].strip() or word,
+            "pinyin": pinyin,
+            "meaning": meaning,
+            "hsk": level,
+        }
+        word_entries.append(entry)
+        word_ids_by_level[level].append(entry["id"])
+
+    if bad_pinyin:
+        print(
+            "error: could not convert pinyin for: " + ", ".join(bad_pinyin),
+            file=sys.stderr,
         )
-        word_entries.append(
-            {
-                "id": entry_id,
-                "simplified": word,
-                "traditional": traditional or word,
-                "pinyin": " ".join(syllables),
-                "meaning": meaning,
-                "hsk": level,
-            }
-        )
-        word_ids_by_level[level].append(entry_id)
+        return 1
+    if skipped:
+        print(f"skipped words: {len(skipped)}: {', '.join(skipped)}", file=sys.stderr)
+
+    def level_name(level: int) -> str:
+        return "7–9" if level == 7 else str(level)
+
+    first = levels[0]
+    last = levels[-1]
+    combined_name = (
+        f"Level {level_name(first)}"
+        if first == last
+        else f"Levels {level_name(first)}–{level_name(last)}"
+    )
 
     groups = []
-    for level in (1, 2, 3):
+    for level in levels:
         groups.append(
             {
                 "id": f"hsk30-level-{level}",
-                "name": f"HSK 3.0 · Level {level}",
+                "name": f"HSK 3.0 · Level {level_name(level)}",
                 "entries": char_ids_by_level[level],
             }
         )
         groups.append(
             {
                 "id": f"hsk30-level-{level}-words",
-                "name": f"HSK 3.0 · Level {level} words",
+                "name": f"HSK 3.0 · Level {level_name(level)} words",
                 "entries": word_ids_by_level[level],
             }
         )
     groups.append(
         {
             "id": "hsk30-all",
-            "name": "HSK 3.0 · Levels 1–3",
+            "name": f"HSK 3.0 · {combined_name}",
             "entries": [entry["id"] for entry in char_entries],
         }
     )
     groups.append(
         {
             "id": "hsk30-all-words",
-            "name": "HSK 3.0 · Words 1–3",
+            "name": f"HSK 3.0 · Words {level_name(first)}–{level_name(last)}",
             "entries": [entry["id"] for entry in word_entries],
         }
     )
 
     entries = char_entries + word_entries
-    # Bump this whenever the deck content changes: the app only reseeds its
-    # SQLite copy when the version differs.
     vocab = {
-        "version": 8,
-        "name": "HSK 3.0 · Levels 1–3",
+        "version": args.version,
+        "name": f"HSK 3.0 · {combined_name}",
         "groups": groups,
         "entries": entries,
     }
 
+    ids = [entry["id"] for entry in entries]
+    simplified = [entry["simplified"] for entry in entries]
+    if len(ids) != len(set(ids)):
+        print("error: duplicate entry IDs", file=sys.stderr)
+        return 1
+    if len(simplified) != len(set(simplified)):
+        print("error: duplicate simplified forms", file=sys.stderr)
+        return 1
+    known = set(ids)
+    for group in groups:
+        unknown = [entry_id for entry_id in group["entries"] if entry_id not in known]
+        if unknown:
+            print(
+                f"error: group {group['id']} references {len(unknown)} unknown entries",
+                file=sys.stderr,
+            )
+            return 1
+
     meanings = [entry["meaning"] for entry in entries]
     print(f"characters: {len(char_entries)}")
-    for level in (1, 2, 3):
-        print(f"  level {level}: {len(char_ids_by_level[level])} chars, "
-              f"{len(word_ids_by_level[level])} words")
-    print(f"words: {len(word_entries)} (skipped {len(skipped)}: {', '.join(skipped)})")
+    for level in levels:
+        print(
+            f"  level {level_name(level)}: {len(char_ids_by_level[level])} chars, "
+            f"{len(word_ids_by_level[level])} words"
+        )
+    print(f"words: {len(word_entries)}")
     print(f"entries: {len(entries)}, groups: {len(groups)}")
+    print(f"IDs reused: {allocator.reused}, generated: {allocator.generated}")
     print(f"distinct meanings: {len(set(meanings))}")
-    print(f"longest meaning: {max(len(m) for m in meanings)} chars")
-    print(f"missing glosses: {sum(1 for m in meanings if m == '—')}")
+    print(f"longest meaning: {max(len(meaning) for meaning in meanings)} chars")
+    print(f"missing glosses: {sum(1 for meaning in meanings if meaning == '—')}")
     bare_refs = [
-        entry for entry in entries
-        if entry["meaning"].startswith(("variant of", "old variant of", "erhua variant of", "erhua form of", "see ", "used in"))
+        entry
+        for entry in entries
+        if entry["meaning"].startswith(
+            (
+                "variant of",
+                "old variant of",
+                "erhua variant of",
+                "erhua form of",
+                "see ",
+                "used in",
+            )
+        )
     ]
     if bare_refs:
         print(f"reference-only meanings: {len(bare_refs)}")

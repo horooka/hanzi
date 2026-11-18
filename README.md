@@ -5,6 +5,9 @@ Rust, GTK4, and libadwaita. Groups of characters and words are trained in
 shuffled order, or any single entry can be picked independently. There are two
 input modes — pick the translation or write the entry.
 
+The deck follows the HSK 3.0 2025 syllabus and currently covers levels 1–5:
+1,527 characters and 2,770 multi-character words.
+
 ![Groups](screenshots/groups.png)
 
 ![Group symbols and mastering](screenshots/group-symbols-and-mastering.png)
@@ -82,4 +85,6 @@ reports correct/mistake feedback but does not schedule anything.
 Code is MIT. The HSK 3.0 deck is generated for this project. Stroke graphics
 come from Make Me a Hanzi / hanzi-writer-data under the Arphic Public License;
 the full text is in `data/strokes/ARPHICPL.TXT`. English glosses are derived
-from CC-CEDICT (CC BY-SA 4.0); see `data/LICENSE-CC-CEDICT`.
+from CC-CEDICT (CC BY-SA 4.0); see `data/LICENSE-CC-CEDICT`. HSK 2025 levels
+and cleaned definitions come from the HSKStory vocabulary dataset (CC BY-SA
+4.0); see `data/LICENSE-HSK-2025`.
