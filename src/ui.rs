@@ -74,6 +74,8 @@ struct Ui {
     audio: Rc<Audio>,
     session: RefCell<Session>,
     mode: Cell<Mode>,
+    quiz_button: gtk::ToggleButton,
+    write_button: gtk::ToggleButton,
     rng: RefCell<u64>,
     correct_index: Cell<usize>,
     made_mistake: Cell<bool>,
@@ -343,6 +345,8 @@ pub fn build(app: &adw::Application) {
         audio,
         session: RefCell::new(Session::default()),
         mode: Cell::new(Mode::Quiz),
+        quiz_button: quiz_button.clone(),
+        write_button: write_button.clone(),
         rng: RefCell::new(seed_rng()),
         correct_index: Cell::new(0),
         made_mistake: Cell::new(false),
@@ -470,76 +474,7 @@ pub fn build(app: &adw::Application) {
     key_controller.set_propagation_phase(gtk::PropagationPhase::Capture);
     {
         let ui = Rc::clone(&ui);
-        key_controller.connect_key_pressed(move |_, keyval, _, _| {
-            let on_review = ui
-                .stack
-                .visible_child_name()
-                .map(|name| name.as_str() == "review")
-                .unwrap_or(false);
-            if !on_review {
-                return glib::Propagation::Proceed;
-            }
-
-            let Some(character) = keyval.to_unicode() else {
-                return glib::Propagation::Proceed;
-            };
-
-            if character.eq_ignore_ascii_case(&'p') {
-                if crate::audio::ENABLED {
-                    ui.play_current();
-                }
-                return glib::Propagation::Stop;
-            }
-
-            let mode = ui.mode.get();
-            let revealed = ui.session.borrow().revealed;
-
-            match mode {
-                Mode::Quiz => {
-                    if revealed {
-                        if matches!(character, ' ' | '\r' | '\n') {
-                            ui.continue_after_answer();
-                            return glib::Propagation::Stop;
-                        }
-                        return glib::Propagation::Proceed;
-                    }
-
-                    if character == ' ' {
-                        return glib::Propagation::Stop;
-                    }
-
-                    let index = match character {
-                        '1' => Some(0),
-                        '2' => Some(1),
-                        '3' => Some(2),
-                        '4' => Some(3),
-                        _ => None,
-                    };
-                    if let Some(index) = index {
-                        ui.answer(index);
-                        glib::Propagation::Stop
-                    } else {
-                        glib::Propagation::Proceed
-                    }
-                },
-                Mode::Write => {
-                    if revealed {
-                        if matches!(character, ' ' | '\r' | '\n') {
-                            ui.continue_after_answer();
-                            return glib::Propagation::Stop;
-                        }
-                        return glib::Propagation::Proceed;
-                    }
-
-                    if character.eq_ignore_ascii_case(&'h') {
-                        ui.writing_pad.hint();
-                        return glib::Propagation::Stop;
-                    }
-
-                    glib::Propagation::Proceed
-                },
-            }
-        });
+        key_controller.connect_key_pressed(move |_, keyval, _, _| ui.key_pressed(keyval));
     }
     window.add_controller(key_controller);
 
@@ -548,6 +483,100 @@ pub fn build(app: &adw::Application) {
 }
 
 impl Ui {
+    /// Route a key press by screen first, then by review phase.  Keeping the
+    /// two levels separate makes it easy to add shortcuts for other screens
+    /// without leaving the review-specific state machine.
+    fn key_pressed(self: &Rc<Self>, keyval: gtk::gdk::Key) -> glib::Propagation {
+        let Some(character) = keyval.to_unicode() else {
+            return glib::Propagation::Proceed;
+        };
+
+        match self.stack.visible_child_name().as_deref() {
+            Some("review") => self.review_key_pressed(character),
+            // Groups, group cards, search and summary currently keep their own
+            // focused widgets. Add page-specific shortcuts here when needed.
+            _ => glib::Propagation::Proceed,
+        }
+    }
+
+    fn review_key_pressed(self: &Rc<Self>, character: char) -> glib::Propagation {
+        if character.eq_ignore_ascii_case(&'p') {
+            if crate::audio::ENABLED {
+                self.play_current();
+            }
+            return glib::Propagation::Stop;
+        }
+
+        if self.session.borrow().revealed {
+            return self.revealed_key_pressed(character);
+        }
+
+        match self.mode.get() {
+            Mode::Quiz => self.quiz_key_pressed(character),
+            Mode::Write => self.write_key_pressed(character),
+        }
+    }
+
+    fn revealed_key_pressed(self: &Rc<Self>, character: char) -> glib::Propagation {
+        if matches!(character, ' ' | '\r' | '\n') {
+            self.continue_after_answer();
+            return glib::Propagation::Stop;
+        }
+        if character.eq_ignore_ascii_case(&'r') {
+            self.show_current();
+            return glib::Propagation::Stop;
+        }
+        if character.eq_ignore_ascii_case(&'q') {
+            self.switch_mode(Mode::Quiz);
+            return glib::Propagation::Stop;
+        }
+        if character.eq_ignore_ascii_case(&'w') {
+            self.switch_mode(Mode::Write);
+            return glib::Propagation::Stop;
+        }
+        glib::Propagation::Proceed
+    }
+
+    fn quiz_key_pressed(&self, character: char) -> glib::Propagation {
+        if character == ' ' {
+            return glib::Propagation::Stop;
+        }
+
+        let index = match character {
+            '1' => 0,
+            '2' => 1,
+            '3' => 2,
+            '4' => 3,
+            _ => return glib::Propagation::Proceed,
+        };
+        self.answer(index);
+        glib::Propagation::Stop
+    }
+
+    fn write_key_pressed(&self, character: char) -> glib::Propagation {
+        if character.eq_ignore_ascii_case(&'h') {
+            self.writing_pad.hint();
+            glib::Propagation::Stop
+        } else {
+            glib::Propagation::Proceed
+        }
+    }
+
+    /// Switch modes through the header toggle so its active state stays in
+    /// sync.  If the requested mode is already active, repeat the current
+    /// entry instead.
+    fn switch_mode(&self, mode: Mode) {
+        let button = match mode {
+            Mode::Quiz => &self.quiz_button,
+            Mode::Write => &self.write_button,
+        };
+        if button.is_active() {
+            self.show_current();
+        } else {
+            button.set_active(true);
+        }
+    }
+
     fn populate_groups(self: &Rc<Self>) {
         while let Some(child) = self.groups_box.first_child() {
             self.groups_box.remove(&child);
@@ -823,9 +852,9 @@ impl Ui {
         }
 
         self.hint.set_text(if correct {
-            "Correct — Space to continue"
+            "Correct — Space continues · R repeats · Q/W switch mode"
         } else {
-            "Mistakes — Space to continue"
+            "Mistakes — Space continues · R repeats · Q/W switch mode"
         });
         self.continue_button.set_visible(true);
         self.continue_button.grab_focus();
@@ -920,9 +949,9 @@ impl Ui {
 
             let missed = self.made_mistake.get();
             self.hint.set_text(if missed {
-                "Missed one — Space to continue"
+                "Missed one — Space continues · R repeats · Q/W switch mode"
             } else {
-                "Correct — Space to continue"
+                "Correct — Space continues · R repeats · Q/W switch mode"
             });
             self.continue_button.set_visible(true);
             self.play_current();
@@ -1596,7 +1625,7 @@ fn build_review() -> ReviewWidgets {
     card.append(&stage);
     card.append(writing_pad.root());
 
-    let hint = gtk::Label::new(Some("1–4 choose · P plays · Space continues"));
+    let hint = gtk::Label::new(Some("1–4 choose · Space continues"));
     hint.add_css_class("hint");
     hint.set_halign(gtk::Align::Center);
     hint.set_wrap(true);

@@ -56,6 +56,8 @@ cargo test
 | `1`–`4` | Pick an answer in Quiz mode |
 | `H` | Animate the next stroke in Write mode |
 | `Space` / `Enter` | Continue after answering |
+| `R` | Repeat the current entry after answering |
+| `Q` / `W` | Repeat the current entry in Quiz / Write mode |
 
 ## Stroke data and writing practice
 
